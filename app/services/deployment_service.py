@@ -4,6 +4,7 @@ from app.db.models.cluster import Cluster, ClusterStatus
 from app.db.models import User
 from app.exceptions import ValidationError
 from app.db import db
+from app.services.queue_service import QueueService
 
 class DeploymentService:
     @staticmethod
@@ -11,7 +12,7 @@ class DeploymentService:
         """
         Create a new deployment on a cluster.
         Validates resource requirements against cluster capacity.
-        Sets initial status as PENDING.
+        Sets initial status as PENDING and adds to Redis queue.
         Priority must be between 1-5 (default: 3-MEDIUM)
         """
         try:
@@ -36,22 +37,16 @@ class DeploymentService:
             if not cluster:
                 raise ValidationError("Cluster not found or not active", "CLUSTER_NOT_FOUND")
 
-            # Validate resource availability
-            if ram > cluster.ram:
-                raise ValidationError("Requested RAM exceeds cluster capacity", "INSUFFICIENT_RAM")
-            if cpu > cluster.cpu:
-                raise ValidationError("Requested CPU exceeds cluster capacity", "INSUFFICIENT_CPU")
-            if gpu > cluster.gpu:
-                raise ValidationError("Requested GPU exceeds cluster capacity", "INSUFFICIENT_GPU")
-
-            # Check if deployment name already exists in cluster
             existing_deployment = Deployment.query.filter_by(
                 cluster_id=cluster_id,
-                name=name,
-                status=DeploymentStatus.PENDING.value
-            ).first()
+                name=name
+            ).filter(Deployment.status != DeploymentStatus.DELETED.value).first()
 
             if existing_deployment:
+                # If deployment exists and is already queued, return it
+                queue_service = QueueService.get_instance()
+                if queue_service.is_deployment_queued(existing_deployment.id):
+                    return existing_deployment
                 raise ValidationError(
                     "A deployment with this name already exists in this cluster",
                     "DEPLOYMENT_EXISTS"
@@ -71,6 +66,19 @@ class DeploymentService:
 
             db.session.add(deployment)
             db.session.commit()
+
+            # Add deployment to Redis queue
+            queue_service = QueueService.get_instance()
+            enqueued = queue_service.enqueue_deployment(
+                deployment.id 
+            )
+
+            if not enqueued:
+                raise ValidationError(
+                    "Deployment was created but could not be queued",
+                    "QUEUE_ERROR"
+                )
+
             return deployment
 
         except Exception as e:
@@ -85,7 +93,6 @@ class DeploymentService:
         List all deployments for a user's organization.
         Optionally filter by cluster and include deleted deployments.
         """
-        # First get all clusters for the organization
         org_clusters = Cluster.query.filter_by(
             organisation_id=user.organisation_id
         ).with_entities(Cluster.id).all()
@@ -95,20 +102,25 @@ class DeploymentService:
         if not cluster_ids:
             return []
 
-        # Base query - filter by organization's clusters
         query = Deployment.query.filter(Deployment.cluster_id.in_(cluster_ids))
 
-        # Filter by specific cluster if provided
         if cluster_id:
             if cluster_id not in cluster_ids:
                 raise ValidationError("Cluster not found or access denied", "CLUSTER_NOT_FOUND")
             query = query.filter_by(cluster_id=cluster_id)
 
-        # Filter by status
         if not include_deleted:
             query = query.filter(Deployment.status != DeploymentStatus.DELETED.value)
 
-        return query.order_by(Deployment.priority.desc(), Deployment.created_at.desc()).all()
+        deployments = query.order_by(Deployment.priority.desc(), Deployment.created_at.desc()).all()
+
+        # Add queue status for pending deployments
+        queue_service = QueueService.get_instance()
+        for deployment in deployments:
+            if deployment.status == DeploymentStatus.PENDING.value:
+                deployment.queue_status = queue_service.get_deployment_status(deployment.id)
+
+        return deployments
 
     @staticmethod
     def get_deployment(user: User, deployment_id: int) -> Deployment:
@@ -116,7 +128,6 @@ class DeploymentService:
         Get a specific deployment by ID.
         Ensures user has access to the deployment through organization.
         """
-        # First get all clusters for the organization
         org_clusters = Cluster.query.filter_by(
             organisation_id=user.organisation_id
         ).with_entities(Cluster.id).all()
@@ -126,10 +137,15 @@ class DeploymentService:
         if not cluster_ids:
             raise ValidationError("Deployment not found", "DEPLOYMENT_NOT_FOUND")
 
-        # Get deployment and verify it belongs to one of user's clusters
         deployment = Deployment.query.filter_by(id=deployment_id).first()
 
         if not deployment or deployment.cluster_id not in cluster_ids:
             raise ValidationError("Deployment not found", "DEPLOYMENT_NOT_FOUND")
 
+        # Add queue status for pending deployments
+        if deployment.status == DeploymentStatus.PENDING.value:
+            queue_service = QueueService.get_instance()
+            deployment.queue_status = queue_service.get_deployment_status(deployment.id)
+
         return deployment 
+    

@@ -72,6 +72,22 @@ def list_clusters():
     except ServiceException as e:
         raise
 
+@cluster_bp.route('/<int:cluster_id>/resources', methods=['GET'])
+@requires_auth
+def get_cluster_resources(cluster_id):
+    """Get resource usage for a specific cluster"""
+    try:
+        user = UserService.get_user_by_id(request.user['user_id'])
+        resources = ClusterService.get_cluster_resources(user, cluster_id)
+
+        return jsonify({
+            'cluster_id': cluster_id,
+            'resources': resources
+        }), 200
+
+    except ServiceException as e:
+        raise
+
 @cluster_bp.route('/<int:cluster_id>', methods=['DELETE'])
 @requires_auth
 @requires_role(Role.ADMIN)

@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    command: flask run --host=0.0.0.0
+    ports:
+      - "5000:5000"
+    environment:
+      - FLASK_APP=app/app.py
+      - FLASK_ENV=development
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DATABASE_PATH=/data/db.sqlite
+    volumes:
+      - sqlite_data:/data
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    command: python worker.py
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - DATABASE_PATH=/data/db.sqlite
+    volumes:
+      - sqlite_data:/data
+    depends_on:
+      - redis
+      - app
+    deploy:
+      replicas: 2  # Run 2 worker containers
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+volumes:
+  sqlite_data:  
