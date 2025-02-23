@@ -3,17 +3,17 @@ version: '3.8'
 services:
   app:
     build: .
-    command: flask run --host=0.0.0.0
+    command: /app/scripts/start.sh
     ports:
-      - "5000:5000"
+      - "6000:6000"
     environment:
       - FLASK_APP=app/app.py
       - FLASK_ENV=development
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DATABASE_PATH=/data/db.sqlite
+      - DATABASE_PATH=/data/app.db
     volumes:
-      - sqlite_data:/data
+      - ./data:/data
     depends_on:
       - redis
 
@@ -23,9 +23,9 @@ services:
     environment:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
-      - DATABASE_PATH=/data/db.sqlite
+      - DATABASE_PATH=/data/app.db
     volumes:
-      - sqlite_data:/data
+      - ./data:/data
     depends_on:
       - redis
       - app

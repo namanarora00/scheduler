@@ -27,11 +27,9 @@ class QueueService:
         Add a deployment to the queue.
         :param deployment_id: ID of the deployment
         """
-        # We'll use this job_id format to track deployments
+        
         job_id = f"deployment:{deployment_id}"
         
-        # Enqueue the job with the deployment data
-        # The actual function will be defined in the worker
         self._queue.enqueue(
             'worker.process_deployment',
             deployment_id,

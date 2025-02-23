@@ -257,15 +257,13 @@ class SchedulerService:
                 if not can_schedule:
                     return False
 
-                db.session.begin()
                 if to_preempt:
                     self._preempt_deployments(to_preempt)
 
                 deployment.status = DeploymentStatus.RUNNING.value
                 deployment.updated_at = datetime.now(timezone.utc)
-                db.session.commit()
+                
                 return True
 
             except SQLAlchemyError:
-                db.session.rollback()
                 raise 

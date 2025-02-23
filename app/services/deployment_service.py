@@ -5,6 +5,7 @@ from app.db.models import User
 from app.exceptions import ValidationError
 from app.db import db
 from app.services.queue_service import QueueService
+from sqlalchemy.exc import SQLAlchemyError
 
 class DeploymentService:
     @staticmethod
@@ -45,12 +46,12 @@ class DeploymentService:
             if existing_deployment:
                 # If deployment exists and is already queued, return it
                 queue_service = QueueService.get_instance()
-                if queue_service.is_deployment_queued(existing_deployment.id):
-                    return existing_deployment
-                raise ValidationError(
-                    "A deployment with this name already exists in this cluster",
-                    "DEPLOYMENT_EXISTS"
-                )
+
+                if not queue_service.get_deployment_status(existing_deployment.id) in ('not_found', 'failed'): 
+                    queue_service.enqueue_deployment(existing_deployment.id)
+                
+                return existing_deployment
+                
 
             deployment = Deployment(
                 name=name,
@@ -81,10 +82,12 @@ class DeploymentService:
 
             return deployment
 
-        except Exception as e:
+        except SQLAlchemyError as e:
+            print(f"Error creating deployment: {e}")
             db.session.rollback()
             if isinstance(e, ValidationError):
-                raise
+                raise e
+                
             raise ValidationError("Failed to create deployment", "DATABASE_ERROR") from e
 
     @staticmethod
