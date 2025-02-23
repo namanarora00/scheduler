@@ -73,6 +73,12 @@ class SchedulerCore:
         """
         Find deployments that can be preempted using a greedy approach.
         """
+
+        print(f"Running deployments: {running_deployments}")
+        print(f"Required deployment: {required_deployment}")
+        print(f"Running deployments priority: {[d.priority for d in running_deployments]}")
+        print(f"Required deployment priority: {required_deployment.priority}")
+
         # Filter deployments with lower priority
         candidates = [
             d for d in running_deployments
@@ -116,8 +122,17 @@ class SchedulerCore:
             )
         )
 
+        print(f"Sorted candidates: {sorted_candidates}")
+        print(f"Sorted candidates priority: {[d.priority for d in sorted_candidates]}")
+        print(f"Sorted candidates utilisation: {[self.resource_manager.calculate_resource_utilization(d.resources) for d in sorted_candidates]}")
+
         to_preempt = []
         acquired = ResourceSpec(ram=0, cpu=0, gpu=0)
+
+        print(f"Acquired resources: {acquired}")
+        print(f"Required deployment resources: {required_deployment.resources}")
+
+        print(f"Can fit: {self.resource_manager.can_fit_deployment(sorted_candidates[0], acquired)}")
 
         
         # Actually selecting the deployments.
@@ -131,12 +146,16 @@ class SchedulerCore:
             acquired.ram += deployment.resources.ram
             acquired.cpu += deployment.resources.cpu
             acquired.gpu += deployment.resources.gpu
+    
+        print(f"Acquired resources after: {acquired}")
 
         # Verify we got enough resources
         if (acquired.ram < required_deployment.resources.ram or
             acquired.cpu < required_deployment.resources.cpu or
             acquired.gpu < required_deployment.resources.gpu):
             return []
+        
+        print(f"To preempt: {to_preempt}")
 
         return to_preempt
 
@@ -156,6 +175,11 @@ class SchedulerCore:
             cpu=cluster.resources.cpu - used.cpu,
             gpu=cluster.resources.gpu - used.gpu
         )
+
+        print(f"Available resources: {available}")
+        print(f"Deployment resources: {deployment.resources}")
+        print(f"Can fit: {self.resource_manager.can_fit_deployment(deployment, available)}")
+        print(f"Cluster running deployments: {cluster.running_deployments}")
 
         # Add directly. 
         if self.resource_manager.can_fit_deployment(deployment, available):
@@ -216,18 +240,12 @@ class SchedulerService:
 
     def _preempt_deployments(self, deployments: List[DeploymentInfo]) -> None:
         """Handle database operations for preemption"""
-        try:
-            db.session.begin()
-            for dep_info in deployments:
-                deployment = Deployment.query.get(dep_info.id)
-                if deployment:
-                    deployment.status = DeploymentStatus.PENDING.value
-                    deployment.updated_at = datetime.now(timezone.utc)
-                    self.queue_service.enqueue_deployment(deployment.id)
-            db.session.commit()
-        except SQLAlchemyError:
-            db.session.rollback()
-            raise
+        for dep_info in deployments:
+            deployment = Deployment.query.get(dep_info.id)
+            if deployment:
+                deployment.status = DeploymentStatus.PENDING.value
+                deployment.updated_at = datetime.now(timezone.utc)
+                self.queue_service.enqueue_deployment(deployment.id)
 
     def try_schedule_deployment(self, deployment: Deployment) -> bool:
         """Database-aware wrapper around core scheduling logic"""
@@ -257,12 +275,12 @@ class SchedulerService:
                 if not can_schedule:
                     return False
 
+                # Make the changes
                 if to_preempt:
                     self._preempt_deployments(to_preempt)
 
                 deployment.status = DeploymentStatus.RUNNING.value
                 deployment.updated_at = datetime.now(timezone.utc)
-                
                 return True
 
             except SQLAlchemyError:

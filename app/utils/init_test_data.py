@@ -124,28 +124,7 @@ def init_test_data():
                 created_at=datetime.now(timezone.utc),
                 updated_at=datetime.now(timezone.utc)
             ),
-            Deployment(
-                name="test-deployment-2",
-                cluster_id=cluster1.id,
-                ram=2,
-                cpu=1,
-                gpu=0,
-                priority=DeploymentPriority.MEDIUM.value,
-                status=DeploymentStatus.PENDING.value,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
-            ),
-            Deployment(
-                name="test-deployment-3",
-                cluster_id=cluster2.id,
-                ram=8,
-                cpu=4,
-                gpu=1,
-                priority=DeploymentPriority.HIGHEST.value,
-                status=DeploymentStatus.RUNNING.value,
-                created_at=datetime.now(timezone.utc),
-                updated_at=datetime.now(timezone.utc)
-            )
+            
         ]
 
         for i, deployment in enumerate(deployments, 1):

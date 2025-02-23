@@ -38,21 +38,25 @@ class DeploymentService:
             if not cluster:
                 raise ValidationError("Cluster not found or not active", "CLUSTER_NOT_FOUND")
 
+            # Check for existing deployment with same name in this cluster
             existing_deployment = Deployment.query.filter_by(
                 cluster_id=cluster_id,
                 name=name
             ).filter(Deployment.status != DeploymentStatus.DELETED.value).first()
 
             if existing_deployment:
-                # If deployment exists and is already queued, return it
-                queue_service = QueueService.get_instance()
-
-                if not queue_service.get_deployment_status(existing_deployment.id) in ('not_found', 'failed'): 
-                    queue_service.enqueue_deployment(existing_deployment.id)
-                
+                print(f"Found existing deployment {existing_deployment.id} with name {name}")
+                # Only re-queue if it's in PENDING state and not already in queue
+                if existing_deployment.status == DeploymentStatus.PENDING.value:
+                    queue_service = QueueService.get_instance()
+                    queue_status = queue_service.get_deployment_status(existing_deployment.id)
+                    print(f"Existing deployment queue status: {queue_status}")
+                    if queue_status in ('not_found', 'failed'):
+                        print(f"Re-queueing deployment {existing_deployment.id}")
+                        queue_service.enqueue_deployment(existing_deployment.id)
                 return existing_deployment
-                
 
+            print(f"Creating new deployment with name {name}")
             deployment = Deployment(
                 name=name,
                 cluster_id=cluster_id,
@@ -67,18 +71,12 @@ class DeploymentService:
 
             db.session.add(deployment)
             db.session.commit()
+            print(f"Created new deployment with ID {deployment.id}")
 
             # Add deployment to Redis queue
             queue_service = QueueService.get_instance()
-            enqueued = queue_service.enqueue_deployment(
-                deployment.id 
-            )
-
-            if not enqueued:
-                raise ValidationError(
-                    "Deployment was created but could not be queued",
-                    "QUEUE_ERROR"
-                )
+            queue_service.enqueue_deployment(deployment.id)
+            print(f"Added deployment {deployment.id} to queue")
 
             return deployment
 
@@ -87,7 +85,6 @@ class DeploymentService:
             db.session.rollback()
             if isinstance(e, ValidationError):
                 raise e
-                
             raise ValidationError("Failed to create deployment", "DATABASE_ERROR") from e
 
     @staticmethod
