@@ -98,7 +98,7 @@ def test_scheduler_needs_preemption():
     )
     
     # Try to schedule a high-priority deployment that needs preemption
-    deployment = create_deployment_info(3, ram=7, cpu=4, gpu=1, priority=5)
+    deployment = create_deployment_info(3, ram=3, cpu=2, gpu=1, priority=5)
     can_schedule, to_preempt = scheduler.can_schedule_deployment(deployment, cluster)
     
     assert can_schedule == True
@@ -158,7 +158,7 @@ def test_scheduler_priority_respect():
     # Create a cluster with mixed priority deployments
     cluster = create_cluster_info(
         ram=20,
-        cpu=10,
+        cpu=7,
         gpu=4,
         running_deployments=[
             create_deployment_info(1, ram=4, cpu=2, gpu=0, priority=1),
@@ -177,3 +177,27 @@ def test_scheduler_priority_respect():
     assert all(d.priority < deployment.priority for d in to_preempt)
     # Should not preempt the priority 4 deployment
     assert all(d.priority != 4 for d in to_preempt) 
+
+
+def test_scheduler_preemption_optimization_v2():
+    """Test that scheduler optimizes preemption choices"""
+    scheduler = SchedulerCore()
+    
+    cluster = create_cluster_info(
+        ram=10,
+        cpu=10,
+        gpu=10,
+        running_deployments=[
+            create_deployment_info(1, ram=2, cpu=2, gpu=2, priority=1),  
+            create_deployment_info(2, ram=3, cpu=3, gpu=3, priority=1),  
+            create_deployment_info(3, ram=5, cpu=5, gpu=5, priority=2),  
+        ]
+    )
+    
+    
+    deployment = create_deployment_info(4, ram=5, cpu=5, gpu=5, priority=3)
+    can_schedule, to_preempt = scheduler.can_schedule_deployment(deployment, cluster)
+    
+    assert can_schedule == True
+    assert len(to_preempt) == 1  
+    assert to_preempt[0].id == 3  # Should be the large id 3 deployment

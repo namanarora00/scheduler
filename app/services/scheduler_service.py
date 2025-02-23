@@ -72,7 +72,6 @@ class SchedulerCore:
     ) -> List[DeploymentInfo]:
         """
         Find deployments that can be preempted using a greedy approach.
-        Pure function with no side effects.
         """
         # Filter deployments with lower priority
         candidates = [
@@ -83,8 +82,32 @@ class SchedulerCore:
         if not candidates:
             return []
 
-        # Sort by utilisation and priority, to make sure we have the max number of deployments running.
-        
+        # Sort priority and utilisation.
+        # We want to maximise the number of deployments running.
+        # so higher usage, lower priority deps are gone first.
+
+        # a case can be that when we have a higher priority dep that alone may 
+        # release enough resources to fit the new one. But lower priority deps would be released first
+        # if we do a regular sort by priority (and then util for same priority)
+        # hmmm.
+
+        # normal way would be to preserve priority order. 
+        # but if we want to maximise the number of deployments running, we want to sort by utilisation.
+
+        # okay so from the context of current deployment,
+        # all lower priority deployments are the same.
+        # lets just sort by utilisation then.
+
+        # since all preemptible deployments are again pushed to the queue,
+        # it might be the case that eventually, the lower priority deps will be removed.
+        # comparing to the priority of the preempted deployment.
+
+        # this means that we're increasing the number of preemptions in the cluster.
+        # meaning - same deployment which was preempted might be scheduled again. in the next run of the worker.
+        # this way at a time we maximise the number of deployments running. 
+
+
+        # so we need to sort by utilisation first.
         sorted_candidates = sorted(
             candidates,
             key=lambda d: (
@@ -125,8 +148,9 @@ class SchedulerCore:
         """
         Check if a deployment can be scheduled, either directly or through preemption.
         """
-        # Calculate available resources
+
         used = self.resource_manager.calculate_used_resources(cluster.running_deployments)
+
         available = ResourceSpec(
             ram=cluster.resources.ram - used.ram,
             cpu=cluster.resources.cpu - used.cpu,
@@ -139,6 +163,8 @@ class SchedulerCore:
 
         # Try removing some of the older deps
         # if we cannot fit even with preemption, this returns 0 deps
+
+
         to_preempt = self.find_preemptible_deployments(
             cluster.running_deployments,
             deployment
@@ -154,6 +180,7 @@ class SchedulerService:
 
     def _get_cluster_info(self, cluster: Cluster) -> ClusterInfo:
         """Convert DB cluster to ClusterInfo"""
+
         running_deployments = Deployment.query.filter_by(
             cluster_id=cluster.id,
             status=DeploymentStatus.RUNNING.value
