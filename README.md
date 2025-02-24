@@ -2,6 +2,158 @@
 
 A smart deployment management system that handles resource allocation and scheduling across multiple clusters with priority-based preemption.
 
+## High-Level Design
+
+### Container Architecture
+
+```mermaid
+graph TD
+    subgraph Docker Environment
+        subgraph API Container
+            A[Flask API Server]
+        end
+        
+        subgraph Worker Containers
+            W1[Worker 1]
+            W2[Worker 2]
+        end
+        
+        subgraph Data Layer
+            R[(Redis)]
+            DB[(SQLite DB)]
+        end
+    end
+    
+    Client-->A
+    A-->R
+    A-->DB
+    R-->W1
+    R-->W2
+    W1-->A
+    W2-->A
+    
+    style API fill:#bbf,stroke:#333,stroke-width:2px
+    style Worker fill:#fdd,stroke:#333,stroke-width:2px
+    style Data fill:#dfd,stroke:#333,stroke-width:2px
+```
+
+### Service Architecture
+
+The system runs as a set of containerized services managed by Docker Compose:
+
+1. **API Server Container**
+   - Runs the Flask application
+   - Handles all HTTP requests
+   - Manages database operations
+   - Enqueues jobs to Redis
+   - Volume mounted: `/data` for SQLite database
+
+2. **Worker Containers (2 instances)**
+   - Process deployment requests from queue
+   - Communicate with API for updates
+   - Run scheduling algorithms
+   - Handle preemption logic
+   - Volume mounted: `/data` for database access
+
+3. **Redis Container**
+   - Manages job queues
+   - Handles distributed locking
+   - Queues:
+     - `deployments`: Main job queue
+     - Started/Finished/Failed job registries
+     - Deferred jobs for delayed processing
+   - Port: 6379
+
+4. **Shared Data Layer**
+   - SQLite Database:
+     - Persistent storage
+     - Shared via Docker volume
+     - Location: `/data/app.db`
+   - Redis Storage:
+     - In-memory queue storage
+     - Job status tracking
+     - Distributed locks
+
+### Queue Architecture
+
+```mermaid
+graph LR
+    A[API] -->|Enqueue| MQ[Main Queue]
+    MQ -->|Process| W[Workers]
+    W -->|Success| F[Finished Registry]
+    W -->|Failure| FL[Failed Registry]
+    W -->|Retry| DQ[Delayed Queue]
+    DQ -->|Delay| MQ
+    
+    style A fill:#bbf,stroke:#333,stroke-width:2px
+    style MQ fill:#dfd,stroke:#333,stroke-width:2px
+    style W fill:#fdd,stroke:#333,stroke-width:2px
+    style F fill:#ddf,stroke:#333,stroke-width:2px
+    style FL fill:#fdd,stroke:#333,stroke-width:2px
+    style DQ fill:#dfd,stroke:#333,stroke-width:2px
+```
+
+### Data Flow
+
+1. **Deployment Creation**
+   - Client sends deployment request to API
+   - API validates and stores in database
+   - Job enqueued to Redis queue
+   - Workers pick up job for processing
+
+2. **Scheduling Process**
+   - Worker fetches deployment details
+   - Acquires cluster lock via Redis
+   - Checks resource availability
+   - Updates deployment status via API
+   - Releases cluster lock
+
+3. **Preemption Flow**
+   - Higher priority deployment arrives
+   - Scheduler identifies preemptible deployments
+   - Updates status of affected deployments
+   - Re-queues preempted deployments with delay
+   - Updates new deployment status
+
+### Scalability & Reliability
+
+- **Multiple Workers**: Two worker containers for parallel processing
+- **Distributed Locking**: Prevents race conditions in scheduling
+- **Automatic Retries**: Failed jobs are automatically retried
+- **Delayed Processing**: Preempted jobs are re-queued with delay
+- **Transaction Management**: ACID compliance for database operations
+- **Queue Monitoring**: Track job status and queue health
+
+### Docker Compose Configuration
+
+```yaml
+services:
+  app:
+    build: .
+    ports:
+      - "6000:6000"
+    volumes:
+      - ./data:/data
+    depends_on:
+      - redis
+
+  worker:
+    build: .
+    command: python worker.py
+    volumes:
+      - ./data:/data
+    depends_on:
+      - redis
+      - app
+    deploy:
+      replicas: 2
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+```
+
 ## System Architecture
 
 ```mermaid
