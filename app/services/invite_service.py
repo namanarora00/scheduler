@@ -21,7 +21,7 @@ class InviteService:
             with db.session.begin_nested():
                 # Check if there's an existing unused invite for this email
                 existing_invite = InviteCode.query.filter_by(
-                    email=email,
+                    user_email=email,
                     is_used=False
                 ).first()
 
@@ -37,7 +37,6 @@ class InviteService:
                     user_email=email,
                     role=role,
                     organisation_id=admin_user.organisation_id,
-                    created_by=admin_user.id,
                     created_at=datetime.now(timezone.utc),
                     expires_at=datetime.now(timezone.utc) + timedelta(days=7),  # 7 days validity
                     is_used=False
