@@ -11,6 +11,8 @@ class InviteService:
 
         return secrets.token_urlsafe(16)
 
+    
+
     @staticmethod
     def create_invite(admin_user: User, email: str, role: str) -> InviteCode:
         
@@ -38,7 +40,7 @@ class InviteService:
                     role=role,
                     organisation_id=admin_user.organisation_id,
                     created_at=datetime.now(timezone.utc),
-                    expires_at=datetime.now(timezone.utc) + timedelta(days=7),  # 7 days validity
+                    valid_until=datetime.now(timezone.utc) + timedelta(days=7),  # 7 days validity
                     is_used=False
                 )
 
@@ -50,3 +52,13 @@ class InviteService:
         except Exception as e:
             db.session.rollback()
             raise
+
+    @staticmethod
+    def list_invites(admin_user: User, include_used: bool = False) -> list[InviteCode]:
+        """List all invites for an organization"""
+        query = InviteCode.query.filter_by(organisation_id=admin_user.organisation_id)
+        
+        if not include_used:
+            query = query.filter_by(is_used=False)
+            
+        return query.order_by(InviteCode.created_at.desc()).all()

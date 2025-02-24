@@ -53,6 +53,7 @@ class AuthService:
             'user_id': user.id,
             'email': user.email,
             'role': user.role,
+            'organisation_id': user.organisation_id,
             'exp': datetime.utcnow() + JWT_ACCESS_TOKEN_EXPIRES
         }
         return jwt.encode(payload, JWT_SECRET_KEY, algorithm=JWT_ALGORITHM)

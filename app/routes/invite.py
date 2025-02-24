@@ -27,9 +27,9 @@ def create_invite():
             'message': 'Invite code created successfully',
             'invite': {
                 'code': invite.code,
-                'email': invite.email,
+                'email': invite.user_email,
                 'role': invite.role,
-                'expires_at': invite.expires_at.isoformat()
+                'valid_until': invite.valid_until.isoformat()
             }
         }), 201
 
@@ -40,7 +40,7 @@ def create_invite():
 @requires_auth
 @requires_role(Role.ADMIN)
 def list_invites():
-    """List all invite codes for the organization"""
+    """List all invite codes"""
     try:
         include_used = request.args.get('include_used', '').lower() == 'true'
         admin = UserService.get_user_by_id(request.user['user_id'])
@@ -48,15 +48,13 @@ def list_invites():
 
         return jsonify({
             'invites': [{
+                'id': invite.id,
                 'code': invite.code,
-                'email': invite.email,
+                'email': invite.user_email,
                 'role': invite.role,
-                'created_at': invite.created_at.isoformat(),
-                'expires_at': invite.expires_at.isoformat(),
                 'is_used': invite.is_used,
-                'used_at': invite.used_at.isoformat() if invite.used_at else None,
-                'is_revoked': invite.is_revoked,
-                'revoked_at': invite.revoked_at.isoformat() if invite.revoked_at else None
+                'valid_until': invite.valid_until.isoformat(),
+                'created_at': invite.created_at.isoformat()
             } for invite in invites]
         }), 200
 
