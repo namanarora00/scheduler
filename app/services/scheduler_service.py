@@ -1,13 +1,16 @@
 from typing import List, Dict, Optional, Tuple, Protocol
 from datetime import datetime, timezone
+from app.db import db
 from app.db.models.deployment import Deployment, DeploymentStatus, DeploymentPriority
 from app.db.models.cluster import Cluster, ClusterStatus
-from app.db import db
 from app.utils.redis_lock import RedisLock
 from app.services.queue_service import QueueService
+from app.services.deployment_service import DeploymentService
 from redis import Redis
 from sqlalchemy.exc import SQLAlchemyError
 from dataclasses import dataclass
+import requests
+import os
 
 @dataclass
 class ResourceSpec:
@@ -202,86 +205,85 @@ class SchedulerService:
         self.queue_service = QueueService.get_instance()
         self.scheduler_core = SchedulerCore()
 
-    def _get_cluster_info(self, cluster: Cluster) -> ClusterInfo:
-        """Convert DB cluster to ClusterInfo"""
-
-        running_deployments = Deployment.query.filter_by(
-            cluster_id=cluster.id,
-            status=DeploymentStatus.RUNNING.value
-        ).all()
-
-        return ClusterInfo(
-            id=cluster.id,
-            resources=ResourceSpec(ram=cluster.ram, cpu=cluster.cpu, gpu=cluster.gpu),
-            running_deployments=[
-                DeploymentInfo(
-                    id=d.id,
-                    name=d.name,
-                    cluster_id=d.cluster_id,
-                    resources=ResourceSpec(ram=d.ram, cpu=d.cpu, gpu=d.gpu),
-                    priority=d.priority,
-                    status=d.status,
-                    created_at=d.created_at
-                ) for d in running_deployments
-            ]
-        )
-
-    def _get_deployment_info(self, deployment: Deployment) -> DeploymentInfo:
-        """Convert DB deployment to DeploymentInfo"""
-        return DeploymentInfo(
-            id=deployment.id,
-            name=deployment.name,
-            cluster_id=deployment.cluster_id,
-            resources=ResourceSpec(ram=deployment.ram, cpu=deployment.cpu, gpu=deployment.gpu),
-            priority=deployment.priority,
-            status=deployment.status,
-            created_at=deployment.created_at
-        )
-
-    def _preempt_deployments(self, deployments: List[DeploymentInfo]) -> None:
-        """Handle database operations for preemption"""
-        for dep_info in deployments:
-            deployment = Deployment.query.get(dep_info.id)
-            if deployment:
-                deployment.status = DeploymentStatus.PENDING.value
-                deployment.updated_at = datetime.now(timezone.utc)
-                self.queue_service.enqueue_deployment(deployment.id)
-
-    def try_schedule_deployment(self, deployment: Deployment) -> bool:
+    def try_schedule_deployment(self, deployment_id: int) -> bool:
         """Database-aware wrapper around core scheduling logic"""
-        if deployment.status == DeploymentStatus.RUNNING.value:
-            return True
+        try:
+            with db.session.begin_nested():
 
-        cluster = Cluster.query.filter_by(
-            id=deployment.cluster_id,
-            status=ClusterStatus.ACTIVE.value
-        ).first()
-
-        if not cluster:
-            return False
-
-        # Try to acquire lock for this cluster
-        with RedisLock(self.redis, f"cluster:{cluster.id}", expire_seconds=30) as lock:
-            try:
-                # Convert DB objects to info objects
-                cluster_info = self._get_cluster_info(cluster)
-                deployment_info = self._get_deployment_info(deployment)
-
-                # Use core scheduler to make decision
-                can_schedule, to_preempt = self.scheduler_core.can_schedule_deployment(
-                    deployment_info, cluster_info
-                )
-
-                if not can_schedule:
+                deployment = DeploymentService.get_deployment(deployment_id)
+                
+                if not deployment:
                     return False
 
-                # Make the changes
-                if to_preempt:
-                    self._preempt_deployments(to_preempt)
+                if deployment.status == DeploymentStatus.RUNNING.value:
+                    return True
+                
 
-                deployment.status = DeploymentStatus.RUNNING.value
-                deployment.updated_at = datetime.now(timezone.utc)
-                return True
+                # Get cluster info from service
+                cluster_data = DeploymentService.get_cluster_deployments(deployment.cluster_id)
+                if not cluster_data:
+                    return False
 
-            except SQLAlchemyError:
-                raise 
+                # Try to acquire lock for this cluster
+                with RedisLock(self.redis, f"cluster:{deployment.cluster_id}", expire_seconds=30) as lock:
+                    try:
+                        # Convert API response to info objects
+                        cluster_info = ClusterInfo(
+                            id=cluster_data['cluster']['id'],
+                            resources=ResourceSpec(
+                                ram=cluster_data['cluster']['ram'],
+                                cpu=cluster_data['cluster']['cpu'],
+                                gpu=cluster_data['cluster']['gpu']
+                            ),
+                            running_deployments=[
+                                DeploymentInfo(
+                                    id=d['id'],
+                                    name=d['name'],
+                                    cluster_id=deployment.cluster_id,
+                                    resources=ResourceSpec(
+                                        ram=d['ram'],
+                                        cpu=d['cpu'],
+                                        gpu=d['gpu']
+                                    ),
+                                    priority=d['priority'],
+                                    status=d['status'],
+                                    created_at=datetime.fromisoformat(d['created_at'])
+                                ) for d in cluster_data['running_deployments']
+                            ]
+                        )
+
+                        deployment_info = DeploymentInfo(
+                            id=deployment.id,
+                            name=deployment.name,
+                            cluster_id=deployment.cluster_id,
+                            resources=ResourceSpec(
+                                ram=deployment.ram,
+                                cpu=deployment.cpu,
+                                gpu=deployment.gpu
+                            ),
+                            priority=deployment.priority,
+                            status=deployment.status,
+                            created_at=deployment.created_at
+                        )
+
+                        # Use core scheduler to make decision
+                        can_schedule, to_preempt = self.scheduler_core.can_schedule_deployment(
+                            deployment_info, cluster_info
+                        )
+
+                        if not can_schedule:
+                            return False
+                        
+                        DeploymentService.preempt_deployments_and_schedule_new(deployment.id, [d.id for d in to_preempt])
+
+                        return True
+
+                    except Exception as e:
+                        print(f"Error in scheduling: {str(e)}")
+                        db.session.rollback()
+                        return False
+
+        except Exception as e:
+            print(f"Database transaction error: {str(e)}")
+            db.session.rollback()
+            return False

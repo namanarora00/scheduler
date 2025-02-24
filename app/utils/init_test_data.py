@@ -3,15 +3,51 @@ from app.db import db
 from app.db.models import Organisation, User, Cluster, Deployment, InviteCode
 from app.db.models.deployment import DeploymentStatus, DeploymentPriority
 from app.db.models.cluster import ClusterStatus
+from redis import Redis
+from rq import Queue
+import os
+
+def clear_all_data():
+    """Clear all data from database"""
+    try:
+        print("\nClearing all existing data from database...")
+        # Delete in order to respect foreign key constraints
+        Deployment.query.delete()
+        InviteCode.query.delete()
+        User.query.delete()
+        Cluster.query.delete()
+        Organisation.query.delete()
+        db.session.commit()
+        print("Database cleared successfully")
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error clearing database: {str(e)}")
+        raise
 
 def init_test_data():
     """Initialize test data in the database"""
     try:
-        print("\nChecking for existing test data...")
-        # Check if test data already exists
-        if User.query.filter_by(email="admin@test.com").first():
-            print("Test data already exists")
-            return
+        print("\nInitializing test data...")
+
+        # Clear Redis queue first
+        redis_host = os.getenv('REDIS_HOST', 'localhost')
+        redis_port = int(os.getenv('REDIS_PORT', 6379))
+        redis_conn = Redis(host=redis_host, port=redis_port)
+        queue = Queue('deployments', connection=redis_conn)
+
+        print("\nClearing Redis queue...")
+        # Clear all jobs from the queue
+        queue.empty()
+        # Clear jobs from all registries
+        queue.started_job_registry.cleanup()
+        queue.finished_job_registry.cleanup()
+        queue.failed_job_registry.cleanup()
+        queue.deferred_job_registry.cleanup()
+        queue.scheduled_job_registry.cleanup()
+        print("Redis queue cleared")
+
+        # Clear all existing data
+        clear_all_data()
 
         print("Creating new test data...")
         # Create test organization

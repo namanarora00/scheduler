@@ -96,8 +96,11 @@ def get_deployment(deployment_id):
     """Get a specific deployment"""
     try:
         user = UserService.get_user_by_id(request.user['user_id'])
-        deployment = DeploymentService.get_deployment(user, deployment_id)
+        deployment = DeploymentService.get_deployment(deployment_id)
 
+        if not deployment:
+            return jsonify({'error': 'Deployment not found'}), 404
+        
         return jsonify({
             'deployment': {
                 'id': deployment.id,

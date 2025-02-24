@@ -1,5 +1,7 @@
 import os
 import sys
+import requests
+import json
 from redis import Redis
 from rq import Worker, Queue, Connection
 from datetime import datetime, timezone
@@ -14,6 +16,17 @@ from sqlalchemy.exc import SQLAlchemyError
 app = Flask(__name__)
 init_db(app)
 
+# Configuration
+API_BASE_URL = os.getenv('API_BASE_URL', 'http://localhost:6000')
+API_TOKEN = os.getenv('API_TOKEN', 'your_api_token_here')  # This should be set in environment
+
+def get_headers():
+    """Get headers for API requests"""
+    return {
+        'Authorization': f'Bearer {API_TOKEN}',
+        'Content-Type': 'application/json'
+    }
+
 def process_deployment(deployment_id: int):
     """
     Process a deployment request.
@@ -23,15 +36,6 @@ def process_deployment(deployment_id: int):
     print(f"\nProcessing deployment {deployment_id}")
     with app.app_context():
         try:
-            # Get deployment
-            deployment = Deployment.query.get(deployment_id)
-            if not deployment:
-                print(f"Error: Deployment {deployment_id} not found in database")
-                raise Exception(f"Deployment {deployment_id} not found")
-
-            print(f"Found deployment: {deployment.name} (Status: {deployment.status})")
-            print(f"Resources requested - RAM: {deployment.ram}GB, CPU: {deployment.cpu}, GPU: {deployment.gpu}")
-            print(f"Priority: {deployment.priority}")
 
             # Create Redis connection for scheduler
             redis_host = os.getenv('REDIS_HOST', 'localhost')
@@ -42,39 +46,22 @@ def process_deployment(deployment_id: int):
             scheduler = SchedulerService(redis_client)
             print(f"Attempting to schedule deployment {deployment_id}")
             
-    
-            try: 
-                db.session.begin()
-            except: 
-                # if there is a txn thats already running we don't care. 
-                pass
-
             try:
-                scheduled = scheduler.try_schedule_deployment(deployment)
-                
+                scheduled = scheduler.try_schedule_deployment(deployment_id)
+
                 if not scheduled:
                     print(f"Could not schedule deployment {deployment_id}")
-                    print("Checking cluster resources...")
-                    
-
                     print(f"Re-enqueueing deployment {deployment_id} for later attempt with a delay.")
-                    import time
-                    time.sleep(10)
 
                     queue_service = QueueService.get_instance()
-                    queue_service.enqueue_deployment(deployment_id)
-
-                    db.session.rollback()
-
-
+                    queue_service.enqueue_deployment(deployment_id, delay=10)
+                    
                     return
 
                 print(f"Successfully scheduled deployment {deployment_id}")
-                db.session.commit()
 
             except SQLAlchemyError as e:
                 print(f"Database error processing deployment {deployment_id}: {str(e)}", file=sys.stderr)
-                db.session.rollback()
                 raise
 
         except Exception as e:

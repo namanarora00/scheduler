@@ -1,3 +1,4 @@
+from datetime import timedelta
 import os
 from redis import Redis
 from rq import Queue
@@ -22,19 +23,27 @@ class QueueService:
         self._redis = Redis(host=redis_host, port=redis_port)
         self._queue = Queue('deployments', connection=self._redis)
 
-    def enqueue_deployment(self, deployment_id: int):
+    def enqueue_deployment(self, deployment_id: int, delay: int = 0):
         """
         Add a deployment to the queue.
         :param deployment_id: ID of the deployment
+        :param delay: Delay in seconds before the deployment is processed
         """
         
         job_id = f"deployment:{deployment_id}"
         
-        self._queue.enqueue(
-            'worker.process_deployment',
-            deployment_id,
-            job_id=job_id
-        )
+        if delay > 0:
+            self._queue.enqueue_in(timedelta(seconds=delay),
+                'worker.process_deployment',
+                deployment_id,
+                job_id=job_id
+            )
+        else:
+            self._queue.enqueue(
+                'worker.process_deployment',
+                deployment_id,
+                job_id=job_id
+            )
 
     def get_queue_status(self) -> Dict[str, int]:
         """Get current queue statistics"""
